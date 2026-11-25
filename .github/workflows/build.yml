@@ -13,11 +13,11 @@ on:
     inputs:
       release:
         description: "Ubuntu/Debian release"
-        default: "jammy"
+        default: "bookworm"
       desktop:
         description: "Build desktop (mate) or minimal (server)"
         type: choice
-        default: "desktop"
+        default: "minimal"
         options: [desktop, minimal]
   push:
     paths:
@@ -76,12 +76,25 @@ jobs:
       - name: Apply RK3528 TV-box patches (board, family, kernel, U-Boot)
         run: cp -R rk3528-tvbox/armbian-patch/* armbian-build/
 
+      # The v24.8.1 build container ships a 2021 Debian keyring that lacks the
+      # current bookworm signing keys (e.g. F8D2585B8783D481), so debootstrap
+      # rejects the archive. Hand debootstrap the runner's apt-verified keyring
+      # instead; signature checking stays on.
+      - name: Provide current Debian archive keyring to debootstrap
+        run: |
+          set -euxo pipefail
+          sudo apt-get install -y debian-archive-keyring gnupg
+          cp /usr/share/keyrings/debian-archive-keyring.gpg armbian-build/debian-archive-keyring.gpg
+          gpg --show-keys --with-colons armbian-build/debian-archive-keyring.gpg | grep -q F8D2585B8783D481
+          sed -i 's|"--variant=minbase"|"--keyring=${SRC}/debian-archive-keyring.gpg" "--variant=minbase"|' armbian-build/lib/functions/rootfs/rootfs-create.sh
+          grep -n -- '--keyring=' armbian-build/lib/functions/rootfs/rootfs-create.sh
+
       - name: Build Armbian image
         run: |
           set -euxo pipefail
           cd armbian-build
           DESKTOP_OPTS=""
-          if [ "${{ github.event.inputs.desktop || 'desktop' }}" = "desktop" ]; then
+          if [ "${{ github.event.inputs.desktop || 'minimal' }}" = "desktop" ]; then
             DESKTOP_OPTS="BUILD_DESKTOP=yes BUILD_MINIMAL=no DESKTOP_APPGROUPS_SELECTED= DESKTOP_ENVIRONMENT=mate DESKTOP_ENVIRONMENT_CONFIG_NAME=config_base"
           else
             DESKTOP_OPTS="BUILD_DESKTOP=no BUILD_MINIMAL=yes"
@@ -89,7 +102,7 @@ jobs:
           ./compile.sh build \
             BOARD=rk3528-tvbox \
             BRANCH=legacy \
-            RELEASE="${{ github.event.inputs.release || 'jammy' }}" \
+            RELEASE="${{ github.event.inputs.release || 'bookworm' }}" \
             $DESKTOP_OPTS \
             EXPERT=yes \
             KERNEL_CONFIGURE=no \
