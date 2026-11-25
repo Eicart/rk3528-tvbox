@@ -78,15 +78,16 @@ jobs:
 
       # The v24.8.1 build container ships a 2021 Debian keyring that lacks the
       # current bookworm signing keys (e.g. F8D2585B8783D481), so debootstrap
-      # rejects the archive. Hand debootstrap the runner's apt-verified keyring
+      # rejects the archive. Only lib/ etc. are copied into the container, so the
+      # keyring goes in lib/. Hand debootstrap the runner's apt-verified keyring
       # instead; signature checking stays on.
       - name: Provide current Debian archive keyring to debootstrap
         run: |
           set -euxo pipefail
           sudo apt-get install -y debian-archive-keyring gnupg
-          cp /usr/share/keyrings/debian-archive-keyring.gpg armbian-build/debian-archive-keyring.gpg
-          gpg --show-keys --with-colons armbian-build/debian-archive-keyring.gpg | grep -q F8D2585B8783D481
-          sed -i 's|"--variant=minbase"|"--keyring=${SRC}/debian-archive-keyring.gpg" "--variant=minbase"|' armbian-build/lib/functions/rootfs/rootfs-create.sh
+          cp /usr/share/keyrings/debian-archive-keyring.gpg armbian-build/lib/debian-archive-keyring.gpg
+          gpg --show-keys --with-colons armbian-build/lib/debian-archive-keyring.gpg | grep -q F8D2585B8783D481
+          sed -i 's|"--variant=minbase"|"--keyring=${SRC}/lib/debian-archive-keyring.gpg" "--variant=minbase"|' armbian-build/lib/functions/rootfs/rootfs-create.sh
           grep -n -- '--keyring=' armbian-build/lib/functions/rootfs/rootfs-create.sh
 
       - name: Build Armbian image
