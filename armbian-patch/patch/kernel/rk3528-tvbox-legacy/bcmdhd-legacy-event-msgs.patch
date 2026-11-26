@@ -1,0 +1,69 @@
+From: haro-server <noreply@localhost>
+Subject: [PATCH] bcmdhd: fall back to legacy event_msgs when event_msgs_ext is unsupported
+
+Old firmware such as BCM4335B0 (Vontar DQ08) returns BCME_UNSUPPORTED for
+event_msgs_ext, which made dhd_legacy_preinit_ioctls() abort and wlan0 never
+come up. Use the 128-bit event_msgs iovar instead, as older bcmdhd did.
+---
+diff --git a/drivers/net/wireless/rockchip_wlan/rkwifi/bcmdhd/dhd_linux.c b/drivers/net/wireless/rockchip_wlan/rkwifi/bcmdhd/dhd_linux.c
+--- a/drivers/net/wireless/rockchip_wlan/rkwifi/bcmdhd/dhd_linux.c
++++ b/drivers/net/wireless/rockchip_wlan/rkwifi/bcmdhd/dhd_linux.c
+@@ -14617,6 +14617,7 @@
+ dhd_legacy_preinit_ioctls(dhd_pub_t *dhd)
+ {
+ 	int ret = 0;
++	bool legacy_evmask = FALSE;
+ 	/*  Room for "event_msgs_ext" + '\0' + bitvec  */
+ 	char iovbuf[WL_EVENTING_MASK_EXT_LEN + EVENTMSGS_EXT_STRUCT_SIZE + 16];
+ 	char *mask;
+@@ -15711,13 +15712,23 @@
+ 	ret = dhd_iovar(dhd, 0, "event_msgs_ext", (char *)eventmask_msg, msglen, iov_buf,
+ 			WLC_IOCTL_SMLEN, FALSE);
+ 
+-	/* event_msgs_ext must be supported */
+-	if (ret != BCME_OK) {
++	/* event_msgs_ext must be supported, except on old firmware (e.g. BCM4335B0) */
++	if (ret == BCME_UNSUPPORTED || ret == BCME_VERSION) {
++		DHD_ERROR(("%s event_msgs_ext unsupported (%d), using legacy event_msgs\n",
++			__FUNCTION__, ret));
++		legacy_evmask = TRUE;
++		ret = dhd_iovar(dhd, 0, "event_msgs", NULL, 0, iov_buf, WLC_IOCTL_SMLEN, FALSE);
++		if (ret < 0) {
++			DHD_ERROR(("%s read legacy event mask failed %d\n", __FUNCTION__, ret));
++			goto done;
++		}
++		bcopy(iov_buf, eventmask_msg->mask, WL_EVENTING_MASK_LEN);
++	} else if (ret != BCME_OK) {
+ 		DHD_ERROR(("%s read event mask ext failed %d\n", __FUNCTION__, ret));
+ 		goto done;
+-	}
+-
+-	bcopy(iov_buf, eventmask_msg, msglen);
++	} else {
++		bcopy(iov_buf, eventmask_msg, msglen);
++	}
+ 	/* make up event mask ext message iovar for event larger than 128 */
+ 	mask = eventmask_msg->mask;
+ 
+@@ -15869,6 +15880,13 @@
+ 	setbit(mask, WLC_E_COUNTRY_CODE_CHANGED);
+ 
+ 	/* Write updated Event mask */
++	if (legacy_evmask) {
++		ret = dhd_iovar(dhd, 0, "event_msgs", mask, WL_EVENTING_MASK_LEN, NULL, 0, TRUE);
++		if (ret < 0) {
++			DHD_ERROR(("%s write legacy event mask failed %d\n", __FUNCTION__, ret));
++			goto done;
++		}
++	} else {
+ 	eventmask_msg->ver = EVENTMSGS_VER;
+ 	eventmask_msg->command = EVENTMSGS_SET_MASK;
+ 	eventmask_msg->len = WL_EVENTING_MASK_EXT_LEN;
+@@ -15877,6 +15895,7 @@
+ 	if (ret < 0) {
+ 		DHD_ERROR(("%s write event mask ext failed %d\n", __FUNCTION__, ret));
+ 		goto done;
++	}
+ 	}
+ 
+ #if defined(DHD_8021X_DUMP) && defined(SHOW_LOGTRACE)
